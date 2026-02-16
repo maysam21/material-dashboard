@@ -3,43 +3,59 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(layout="wide", page_title="Material Planning Dashboard")
+st.set_page_config(layout="wide", page_title="Material Planning Executive Dashboard")
 
-st.title("Material Planning Dashboard - Q4")
+# ---------------- DARK STYLE ----------------
+st.markdown("""
+<style>
+body { background-color: #0b1c2d; }
+.block-container { padding-top: 1rem; }
+.metric-container {
+    background: linear-gradient(145deg, #10243a, #0b1c2d);
+    padding: 20px;
+    border-radius: 15px;
+    text-align: center;
+    color: white;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("Material Planning Executive Dashboard")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
-if file is not None:
+if file:
 
-    # IMPORTANT: header row is 2nd row in your Excel
+    # Read correct header row
     df = pd.read_excel(file, header=1)
-
-    # Clean column names
     df.columns = df.columns.astype(str).str.strip()
 
-    # Keep only useful columns
-    required_columns = ["PLAN", "COMPLETE", "PENDING"]
+    # Drop empty rows
+    df = df.dropna(how="all")
 
-    for col in required_columns:
-        if col not in df.columns:
-            st.error(f"Column '{col}' not found in Excel.")
-            st.write("Detected columns:", df.columns.tolist())
-            st.stop()
-
-    # Remove empty rows
-    df = df.dropna(subset=["PLAN", "COMPLETE"], how="all")
-
-    # Convert numeric safely
-    df["PLAN"] = pd.to_numeric(df["PLAN"], errors="coerce").fillna(0)
-    df["COMPLETE"] = pd.to_numeric(df["COMPLETE"], errors="coerce").fillna(0)
+    # Ensure numeric conversion
+    for col in ["PLAN", "COMPLETE", "PENDING"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
     # Calculate Shortage
     df["Shortage"] = df["PLAN"] - df["COMPLETE"]
 
-    # ---------- KPI ----------
-    total_plan = df["PLAN"].sum()
-    total_complete = df["COMPLETE"].sum()
-    total_shortage = df["Shortage"].sum()
+    # ---------------- FILTER SECTION ----------------
+    colF1, colF2 = st.columns(2)
+
+    model_filter = colF1.selectbox("Select Model", ["All"] + list(df.columns[:10]))
+    min_shortage = colF2.slider("Minimum Shortage Filter", 0, int(df["Shortage"].max()), 0)
+
+    filtered_df = df.copy()
+
+    if min_shortage > 0:
+        filtered_df = filtered_df[filtered_df["Shortage"] >= min_shortage]
+
+    # ---------------- KPI SECTION ----------------
+    total_plan = filtered_df["PLAN"].sum()
+    total_complete = filtered_df["COMPLETE"].sum()
+    total_shortage = filtered_df["Shortage"].sum()
     shortage_percent = (total_shortage / total_plan * 100) if total_plan else 0
 
     col1, col2, col3, col4 = st.columns(4)
@@ -51,7 +67,7 @@ if file is not None:
 
     st.markdown("---")
 
-    # ---------- DONUT ----------
+    # ---------------- DONUT CHART ----------------
     fig_donut = go.Figure(data=[go.Pie(
         labels=["Complete", "Shortage"],
         values=[total_complete, total_shortage],
@@ -65,8 +81,31 @@ if file is not None:
 
     st.plotly_chart(fig_donut, use_container_width=True)
 
-    # ---------- TOP SHORTAGE ROWS ----------
-    top_rows = df.sort_values("Shortage", ascending=False).head(10)
+    # ---------------- MODEL-WISE BREAKDOWN ----------------
+    model_columns = df.columns[:10]
+
+    model_data = []
+    for model in model_columns:
+        try:
+            value = pd.to_numeric(df[model], errors="coerce").sum()
+            model_data.append({"Model": model, "Total": value})
+        except:
+            continue
+
+    model_df = pd.DataFrame(model_data)
+
+    fig_model = px.bar(
+        model_df,
+        x="Model",
+        y="Total",
+        template="plotly_dark",
+        title="Model-wise Total Planning"
+    )
+
+    st.plotly_chart(fig_model, use_container_width=True)
+
+    # ---------------- TOP SHORTAGE ITEMS ----------------
+    top_rows = filtered_df.sort_values("Shortage", ascending=False).head(10)
 
     fig_bar = px.bar(
         top_rows,
@@ -80,4 +119,4 @@ if file is not None:
     st.plotly_chart(fig_bar, use_container_width=True)
 
     st.markdown("### Detailed Data")
-    st.dataframe(df[["PLAN", "COMPLETE", "Shortage"]], use_container_width=True)
+    st.dataframe(filtered_df, use_container_width=True)
