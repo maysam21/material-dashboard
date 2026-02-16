@@ -76,4 +76,24 @@ if file is not None:
 
             fig_area = px.area(trend,
                                x=eta_col,
-                               y=shortage_c_
+                               y=shortage_col,
+                               template="plotly_dark",
+                               title="Shortage Trend vs ETA")
+
+            st.plotly_chart(fig_area, use_container_width=True)
+
+        # Top Parts
+        if part_col and shortage_col:
+            top_parts = df.sort_values(shortage_col, ascending=False).head(10)
+
+            fig_bar = px.bar(top_parts,
+                             x=shortage_col,
+                             y=part_col,
+                             orientation="h",
+                             template="plotly_dark",
+                             title="Top 10 Shortage Parts")
+
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+    else:
+        st.error("Required or Stock column not found in Excel.")
