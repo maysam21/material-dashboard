@@ -37,8 +37,31 @@ file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 if file:
     df = pd.read_excel(file)
 
-    total_required = df["Required"].sum()
-    total_stock = df["Stock"].sum()
+    # Clean column names (remove spaces)
+df.columns = df.columns.str.strip()
+
+# Try to auto-detect columns
+required_col = None
+stock_col = None
+shortage_col = None
+
+for col in df.columns:
+    if "req" in col.lower():
+        required_col = col
+    if "stock" in col.lower() or "avail" in col.lower():
+        stock_col = col
+    if "short" in col.lower():
+        shortage_col = col
+
+if required_col and stock_col:
+    total_required = df[required_col].sum()
+    total_stock = df[stock_col].sum()
+    total_shortage = total_required - total_stock
+    shortage_percent = (total_shortage / total_required) * 100
+else:
+    st.error("Required or Stock column not found in Excel.")
+    st.stop()
+
     total_shortage = total_required - total_stock
     shortage_percent = (total_shortage / total_required) * 100
 
@@ -61,7 +84,17 @@ if file:
 
     colA, colB = st.columns(2)
 
-    supplier_data = df.groupby("Supplier")["Shortage"].sum().sort_values(ascending=False).head(10)
+    supplier_col = None
+
+for col in df.columns:
+    if "supplier" in col.lower():
+        supplier_col = col
+
+if supplier_col and shortage_col:
+    supplier_data = df.groupby(supplier_col)[shortage_col].sum().sort_values(ascending=False).head(10)
+else:
+    st.warning("Supplier or Shortage column not found.")
+
 
     fig_donut = go.Figure(data=[go.Pie(
         labels=supplier_data.index,
