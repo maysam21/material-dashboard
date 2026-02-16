@@ -3,65 +3,80 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(layout="wide")
+st.set_page_config(
+    layout="wide",
+    page_title="Material Planning Dashboard"
+)
+
 st.title("Material Planning Dashboard - Q4")
 
-file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
+file = st.file_uploader("Upload Clean Material Planning Excel", type=["xlsx"])
 
-if file:
+if file is not None:
 
-    # Read without header
-    df_raw = pd.read_excel(file, header=None)
-
-    # Header row is row 10 (index 10)
-    df = pd.read_excel(file, header=10)
+    # Read clean structured file
+    df = pd.read_excel(file)
 
     # Clean column names
-    df.columns = df.columns.astype(str).str.strip()
+    df.columns = df.columns.str.strip()
 
-    # Remove empty rows
-    df = df.dropna(how="all")
+    # Ensure required columns exist
+    required_columns = ["Item", "Plan", "Complete", "Stock", "Shortage"]
 
-    st.write("Detected Columns:", df.columns.tolist())
+    for col in required_columns:
+        if col not in df.columns:
+            st.error(f"Column '{col}' not found in Excel.")
+            st.stop()
 
-    # ---- COLUMN MAPPING (BASED ON YOUR FILE) ----
-    required_col = "PLAN"
-    stock_col = "jd- STOCK"
-    complete_col = "COMPLETE"
+    # Convert numeric safely
+    for col in ["Plan", "Complete", "Stock", "Shortage"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    # Ensure numeric
-    for col in [required_col, stock_col, complete_col]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-    # Calculate Shortage
-    df["Shortage"] = df[required_col] - df[complete_col]
-
-    # KPI
-    total_required = df[required_col].sum()
-    total_stock = df[stock_col].sum()
+    # ---------------- KPI SECTION ----------------
+    total_plan = df["Plan"].sum()
+    total_complete = df["Complete"].sum()
+    total_stock = df["Stock"].sum()
     total_shortage = df["Shortage"].sum()
-    shortage_percent = (total_shortage / total_required * 100) if total_required else 0
+
+    shortage_percent = (total_shortage / total_plan * 100) if total_plan != 0 else 0
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Total Plan", f"{total_required:,.0f}")
-    col2.metric("Total Stock", f"{total_stock:,.0f}")
-    col3.metric("Total Shortage", f"{total_shortage:,.0f}")
+    col1.metric("Total Plan", f"{total_plan:,.0f}")
+    col2.metric("Total Complete", f"{total_complete:,.0f}")
+    col3.metric("Total Stock", f"{total_stock:,.0f}")
     col4.metric("Shortage %", f"{shortage_percent:.1f}%")
 
     st.markdown("---")
 
-    # Top Items by Shortage
+    # ---------------- DONUT CHART ----------------
+    fig_donut = go.Figure(data=[go.Pie(
+        labels=["Complete", "Shortage"],
+        values=[total_complete, total_shortage],
+        hole=0.6
+    )])
+
+    fig_donut.update_layout(
+        template="plotly_dark",
+        title="Completion vs Shortage"
+    )
+
+    st.plotly_chart(fig_donut, use_container_width=True)
+
+    # ---------------- TOP SHORTAGE ITEMS ----------------
     top_items = df.sort_values("Shortage", ascending=False).head(10)
 
     fig_bar = px.bar(
         top_items,
         x="Shortage",
-        y=df.columns[0],
+        y="Item",
         orientation="h",
         template="plotly_dark",
         title="Top 10 Shortage Items"
     )
 
     st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ---------------- DATA TABLE ----------------
+    st.markdown("### Detailed Data")
+    st.dataframe(df, use_container_width=True)
