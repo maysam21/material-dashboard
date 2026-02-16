@@ -22,10 +22,6 @@ if file is not None:
 
     st.write("Detected Columns:", df.columns.tolist())
 
-
-    # CLEAN COLUMN NAMES
-    df.columns = df.columns.str.strip()
-
     # AUTO DETECT COLUMNS
     required_col = None
     stock_col = None
