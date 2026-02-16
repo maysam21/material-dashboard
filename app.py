@@ -12,7 +12,16 @@ file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 if file is not None:
 
     # READ FILE
-    df = pd.read_excel(file)
+    if file is not None:
+
+    # Read correct header row
+    df = pd.read_excel(file, header=2)
+
+    # Clean column names
+    df.columns = df.columns.str.strip()
+
+    st.write("Detected Columns:", df.columns.tolist())
+
 
     # CLEAN COLUMN NAMES
     df.columns = df.columns.str.strip()
@@ -97,3 +106,4 @@ if file is not None:
 
     else:
         st.error("Required or Stock column not found in Excel.")
+
