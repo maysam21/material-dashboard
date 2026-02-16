@@ -9,8 +9,6 @@ st.title("Material Planning Dashboard - Q4")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
-if file is not None:
-
     # READ FILE
     if file is not None:
 
@@ -102,4 +100,5 @@ if file is not None:
 
     else:
         st.error("Required or Stock column not found in Excel.")
+
 
