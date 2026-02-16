@@ -17,26 +17,51 @@ if file:
     df = pd.read_excel(excel, sheet_name=selected_sheet, header=1)
     df.columns = df.columns.astype(str).str.strip()
 
-    # Keep valid numeric rows
-    df = df[pd.to_numeric(df["PLAN"], errors="coerce").notnull()]
+    # -------- AUTO DETECT IMPORTANT COLUMNS --------
+    plan_col = None
+    complete_col = None
+    stock_col = None
 
-    for col in ["PLAN", "COMPLETE", "jd- STOCK"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    for col in df.columns:
+        lower = col.lower()
 
-    df["Shortage"] = df["PLAN"] - df["COMPLETE"]
-    df["Completion %"] = (df["COMPLETE"] / df["PLAN"] * 100).fillna(0)
+        if "plan" in lower:
+            plan_col = col
+        if "complete" in lower:
+            complete_col = col
+        if "stock" in lower:
+            stock_col = col
 
-    # ---------------- KPI SECTION ----------------
-    total_plan = df["PLAN"].sum()
-    total_complete = df["COMPLETE"].sum()
+    if plan_col is None or complete_col is None:
+        st.error("PLAN or COMPLETE column not found.")
+        st.write("Detected columns:", df.columns.tolist())
+        st.stop()
+
+    # Keep only valid numeric rows
+    df = df[pd.to_numeric(df[plan_col], errors="coerce").notnull()]
+
+    df[plan_col] = pd.to_numeric(df[plan_col], errors="coerce").fillna(0)
+    df[complete_col] = pd.to_numeric(df[complete_col], errors="coerce").fillna(0)
+
+    if stock_col:
+        df[stock_col] = pd.to_numeric(df[stock_col], errors="coerce").fillna(0)
+    else:
+        df["Stock_Auto"] = 0
+        stock_col = "Stock_Auto"
+
+    # -------- CALCULATIONS --------
+    df["Shortage"] = df[plan_col] - df[complete_col]
+    df["Completion %"] = (df[complete_col] / df[plan_col] * 100).fillna(0)
+
+    total_plan = df[plan_col].sum()
+    total_complete = df[complete_col].sum()
+    total_stock = df[stock_col].sum()
     total_shortage = df["Shortage"].sum()
-    total_stock = df["jd- STOCK"].sum()
 
     completion_percent = (total_complete / total_plan * 100) if total_plan else 0
-    shortage_percent = (total_shortage / total_plan * 100) if total_plan else 0
     stock_coverage = (total_stock / total_shortage * 100) if total_shortage else 0
 
+    # -------- KPI --------
     col1, col2, col3, col4, col5 = st.columns(5)
 
     col1.metric("Total Plan", f"{total_plan:,.0f}")
@@ -47,13 +72,9 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- RISK ANALYSIS ----------------
-    shortage_items = df[df["Shortage"] > 0]
-    high_risk = df[df["Completion %"] < 80]
-
+    # -------- RISK DISTRIBUTION --------
     colA, colB = st.columns(2)
 
-    # Completion Distribution
     fig_hist = px.histogram(
         df,
         x="Completion %",
@@ -64,11 +85,12 @@ if file:
 
     colA.plotly_chart(fig_hist, use_container_width=True)
 
-    # Plan vs Complete Gap
+    top_shortage = df.sort_values("Shortage", ascending=False).head(10)
+
     fig_gap = px.bar(
-        df.sort_values("Shortage", ascending=False).head(10),
+        top_shortage,
         x="Shortage",
-        y=df.sort_values("Shortage", ascending=False).head(10).index,
+        y=top_shortage.index,
         orientation="h",
         template="plotly_dark",
         title="Top 10 Shortage Gaps"
@@ -78,7 +100,7 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- DONUT OVERVIEW ----------------
+    # -------- OVERALL PROGRESS --------
     fig_donut = go.Figure(data=[go.Pie(
         labels=["Completed", "Remaining"],
         values=[total_complete, total_shortage],
@@ -92,9 +114,12 @@ if file:
 
     st.plotly_chart(fig_donut, use_container_width=True)
 
-    # ---------------- INSIGHT TEXT ----------------
+    # -------- INSIGHTS --------
     st.markdown("### Executive Insights")
 
-    st.write(f"• {len(shortage_items)} items currently in shortage.")
-    st.write(f"• {len(high_risk)} items below 80% completion.")
+    shortage_items = len(df[df["Shortage"] > 0])
+    high_risk = len(df[df["Completion %"] < 80])
+
+    st.write(f"• {shortage_items} items currently in shortage.")
+    st.write(f"• {high_risk} items below 80% completion.")
     st.write(f"• Overall completion stands at {completion_percent:.1f}%.")
