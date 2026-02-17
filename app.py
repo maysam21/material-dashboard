@@ -2,16 +2,30 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import base64
 import os
 
 st.set_page_config(layout="wide")
 
-# ---------------- SAFE LOGO HEADER ----------------
+# ---------------- SAFE LOGO FUNCTION ----------------
+def load_logo(path):
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            data = f.read()
+        encoded = base64.b64encode(data).decode()
+        return f"data:image/png;base64,{encoded}"
+    return None
+
+logo_data = load_logo("logo.png")
+
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=120)
+    if logo_data:
+        st.markdown(
+            f'<img src="{logo_data}" width="120">',
+            unsafe_allow_html=True
+        )
 
 with col_title:
     st.markdown(
@@ -26,13 +40,10 @@ if file:
     excel = pd.ExcelFile(file)
     sheet = st.selectbox("Business Unit", excel.sheet_names)
 
-    # Read sheet
     df = pd.read_excel(excel, sheet_name=sheet, header=1)
     df.columns = df.columns.str.strip()
-
     df = df[df["PART NAME"].notna()]
 
-    # Detect SKU columns
     sku_columns = [
         col for col in df.columns
         if any(x in col for x in [
@@ -42,16 +53,12 @@ if file:
 
     selected_sku = st.selectbox("Select SKU", sku_columns)
 
-    # ---------------- JFM PRODUCTION PLAN ----------------
     production_qty = pd.to_numeric(df.iloc[0][selected_sku], errors="coerce")
 
-    # Convert numeric safely
     df["TOTAL STOCK"] = pd.to_numeric(df["TOTAL STOCK"], errors="coerce").fillna(0)
     df["QTY PER M/C"] = pd.to_numeric(df["QTY PER M/C"], errors="coerce").fillna(0)
 
-    # ---- Vertical Logic ----
     sku_df = df[df[selected_sku].notna()].copy()
-
     sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
     sku_df = sku_df[sku_df["Required"].notna()]
 
@@ -59,7 +66,6 @@ if file:
         st.warning("No parts mapped for this SKU.")
         st.stop()
 
-    # Shortage
     sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
     sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
 
@@ -95,16 +101,19 @@ if file:
     st.metric("FG Buildable", fg_buildable)
     st.write(production_status)
 
-    # Show bottleneck part if possible
-    if fg_buildable > 0:
-        bottleneck_part = sku_df.loc[
-            sku_df["Possible_FG_From_Part"].idxmin()
-        ]["PART NAME"]
-        st.write(f"**Bottleneck Part:** {bottleneck_part}")
+    # ---------------- PRODUCTION GAP ----------------
+    if not pd.isna(production_qty):
+
+        production_gap = int(production_qty) - fg_buildable
+
+        if production_gap <= 0:
+            st.success("🟢 Production Plan Achievable with Current Stock")
+        else:
+            st.error(f"🔴 Production Shortfall: {production_gap} Units")
 
     st.markdown("---")
 
-    # ---------------- TOP BOTTLENECK PARTS (ALWAYS SHOW) ----------------
+    # ---------------- PART SHORTAGE OVERVIEW ----------------
     bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
 
     fig = px.bar(
