@@ -107,7 +107,9 @@ if file:
             sku_df["Required_for_Target"] - sku_df["TOTAL STOCK"]
         ).apply(lambda x: x if x > 0 else 0)
 
-        total_additional = sku_df["Additional_Needed"].sum()
+        critical_parts = sku_df[sku_df["Additional_Needed"] > 0]
+        st.write(f"{len(critical_parts)} parts need procurement to meet target.")
+
 
         st.write(f"Additional parts required to achieve target: {int(total_additional)} units")
 
@@ -143,16 +145,18 @@ if file:
         st.metric("Total Financial Exposure (₹)", f"{int(total_impact):,}")
 
     # ---------------- RISK HEATMAP ----------------
-    st.markdown("### Risk Heatmap Matrix")
+    # ---------------- SAFE RISK HEATMAP ----------------
+st.markdown("### Risk Heatmap Matrix")
 
+try:
     sku_df["Demand Level"] = pd.qcut(
-        sku_df["Required"],
+        sku_df["Required"].rank(method="first"),
         3,
         labels=["Low", "Medium", "High"]
     )
 
     sku_df["Stock Risk"] = pd.qcut(
-        sku_df["TOTAL STOCK"],
+        sku_df["TOTAL STOCK"].rank(method="first"),
         3,
         labels=["Low", "Medium", "High"]
     )
@@ -168,7 +172,12 @@ if file:
         z="Count",
         template="plotly_dark"
     )
+
     st.plotly_chart(fig_heat, use_container_width=True)
+
+except Exception:
+    st.info("Not enough variation in data to generate heatmap.")
+
 
     # ---------------- SKU COMPARISON ----------------
     st.markdown("### SKU Comparison")
@@ -185,6 +194,7 @@ if file:
         template="plotly_dark"
     )
     st.plotly_chart(fig_compare, use_container_width=True)
+
 
 
 
