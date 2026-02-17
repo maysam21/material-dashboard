@@ -7,10 +7,10 @@ import math
 st.set_page_config(layout="wide")
 
 # ---------------- HEADER ----------------
-col_logo, col_title = st.columns([1, 4])
-with col_logo:
+#col_logo, col_title = st.columns([1, 4])
+#with col_logo:
     #st.image("logo.png", width=120)
-with col_title:
+#with col_title:
     st.markdown(
         "<h2 style='padding-top:20px;'>Production Intelligence Command Center</h2>",
         unsafe_allow_html=True
@@ -183,6 +183,7 @@ if file:
         template="plotly_dark"
     )
     st.plotly_chart(fig_compare, use_container_width=True)
+
 
 
 
