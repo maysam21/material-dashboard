@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import numpy as np
 
 st.set_page_config(layout="wide")
 
-st.title("Material Planning – Advanced Analytics Dashboard")
+st.title("Material Planning – SKU Intelligence Dashboard")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
@@ -20,126 +21,103 @@ if file:
     df = df[df["PART NAME"].notna()]
 
     # Convert numeric safely
-    for col in ["TOTAL STOCK", "Shortage"]:
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="ignore")
+
+    sku_list = df["PART NUMBER"].dropna().unique()
+    selected_sku = st.selectbox("Select SKU (Part Number)", sku_list)
+
+    sku_df = df[df["PART NUMBER"] == selected_sku].iloc[0]
+
+    # ---------------- CORE METRICS ----------------
+    total_stock = pd.to_numeric(sku_df["TOTAL STOCK"], errors="coerce")
+    shortage = pd.to_numeric(sku_df["Shortage"], errors="coerce")
+    required = total_stock + shortage
+
+    gap_percent = (shortage / required * 100) if required else 0
+
+    # Risk classification
+    if gap_percent > 40:
+        risk = "🔴 CRITICAL"
+        color = "red"
+    elif gap_percent > 20:
+        risk = "🟡 WATCH"
+        color = "orange"
+    else:
+        risk = "🟢 HEALTHY"
+        color = "green"
+
+    # ---------------- KPI ROW ----------------
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    col1.metric("Required", f"{required:,.0f}")
+    col2.metric("Stock", f"{total_stock:,.0f}")
+    col3.metric("Shortage", f"{shortage:,.0f}")
+    col4.metric("Gap %", f"{gap_percent:.1f}%")
+    col5.markdown(f"<h3 style='color:{color}'>{risk}</h3>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ---------------- MODEL BREAKDOWN ----------------
+    model_cols = [
+        col for col in df.columns
+        if any(x in col for x in ["Arista", "Asteria", "BLDC"])
+    ]
+
+    model_data = []
+    for model in model_cols:
+        val = pd.to_numeric(sku_df[model], errors="coerce")
+        if not pd.isna(val):
+            model_data.append({"Model": model, "Demand": val})
+
+    model_df = pd.DataFrame(model_data)
+
+    colA, colB = st.columns(2)
+
+    if not model_df.empty:
+        fig_model = px.bar(
+            model_df,
+            x="Model",
+            y="Demand",
+            template="plotly_dark",
+            title="Model-wise Demand"
+        )
+        colA.plotly_chart(fig_model, use_container_width=True)
+
+    # ---------------- STOCK vs SHORTAGE ----------------
+    fig_donut = go.Figure(data=[go.Pie(
+        labels=["Stock", "Shortage"],
+        values=[total_stock, shortage],
+        hole=0.65
+    )])
+
+    fig_donut.update_layout(
+        template="plotly_dark",
+        title="Supply Position"
+    )
+
+    colB.plotly_chart(fig_donut, use_container_width=True)
+
+    st.markdown("---")
+
+    # ---------------- PROCUREMENT DETAILS ----------------
+    st.markdown("### Procurement & Supply Details")
+
+    details_cols = [
+        "Supplier", "PO Number", "ETA", "Received Qty"
+    ]
+
+    detail_data = {}
+    for col in details_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            detail_data[col] = sku_df[col]
 
-    # Estimate Required
-    df["Required"] = df["TOTAL STOCK"] + df["Shortage"]
-
-    # Avoid division by zero
-    df["Gap %"] = np.where(
-        df["Required"] > 0,
-        (df["Shortage"] / df["Required"]) * 100,
-        0
-    )
-
-    # ---------------- KPI SECTION ----------------
-    total_required = df["Required"].sum()
-    total_stock = df["TOTAL STOCK"].sum()
-    total_shortage = df["Shortage"].sum()
-
-    coverage_ratio = (total_stock / total_required * 100) if total_required else 0
-    shortage_ratio = (total_shortage / total_required * 100) if total_required else 0
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric("Total Required", f"{total_required:,.0f}")
-    col2.metric("Stock Coverage %", f"{coverage_ratio:.1f}%")
-    col3.metric("Shortage %", f"{shortage_ratio:.1f}%")
-    col4.metric("Critical Items", int((df["Gap %"] > 40).sum()))
+    st.table(pd.DataFrame(detail_data.items(), columns=["Field", "Value"]))
 
     st.markdown("---")
 
-    # ---------------- SUPPLIER RISK ----------------
-    if "Supplier" in df.columns:
+    st.markdown("### Executive Insight")
 
-        supplier_risk = (
-            df.groupby("Supplier")
-            .agg({
-                "Shortage": "sum",
-                "Required": "sum"
-            })
-            .reset_index()
-        )
-
-        supplier_risk["Risk %"] = (
-            supplier_risk["Shortage"] /
-            supplier_risk["Required"] * 100
-        )
-
-        fig_supplier = px.bar(
-            supplier_risk.sort_values("Risk %", ascending=False),
-            x="Risk %",
-            y="Supplier",
-            orientation="h",
-            template="plotly_dark",
-            title="Supplier Risk Ranking"
-        )
-
-        st.plotly_chart(fig_supplier, use_container_width=True)
-
-    st.markdown("---")
-
-    # ---------------- RISK HEAT MATRIX ----------------
-    df["Demand Level"] = pd.qcut(df["Required"], 3, labels=["Low", "Medium", "High"])
-    df["Risk Level"] = pd.qcut(df["Gap %"], 3, labels=["Low", "Medium", "High"])
-
-    heat_data = df.groupby(["Demand Level", "Risk Level"]).size().reset_index(name="Count")
-
-    fig_heat = px.density_heatmap(
-        heat_data,
-        x="Demand Level",
-        y="Risk Level",
-        z="Count",
-        template="plotly_dark",
-        title="Risk Heat Matrix"
-    )
-
-    st.plotly_chart(fig_heat, use_container_width=True)
-
-    st.markdown("---")
-
-    # ---------------- TOP RISK ITEMS ----------------
-    top_risk = df.sort_values("Gap %", ascending=False).head(10)
-
-    fig_top = px.bar(
-        top_risk,
-        x="Gap %",
-        y="PART NAME",
-        orientation="h",
-        template="plotly_dark",
-        title="Top 10 High Risk Parts"
-    )
-
-    st.plotly_chart(fig_top, use_container_width=True)
-
-    st.markdown("---")
-
-    # ---------------- ETA RISK ANALYSIS ----------------
-    if "ETA" in df.columns:
-
-        df["ETA Status"] = np.where(
-            df["ETA"].isna(),
-            "No ETA",
-            "Has ETA"
-        )
-
-        eta_summary = df.groupby("ETA Status")["Shortage"].sum().reset_index()
-
-        fig_eta = px.pie(
-            eta_summary,
-            names="ETA Status",
-            values="Shortage",
-            hole=0.6,
-            template="plotly_dark",
-            title="Shortage Exposure by ETA Status"
-        )
-
-        st.plotly_chart(fig_eta, use_container_width=True)
-
-    st.markdown("### Executive Insight Summary")
-
-    st.write(f"• {int((df['Gap %'] > 40).sum())} parts are critically exposed (>40% gap).")
-    st.write(f"• {int((df['Gap %'] > 20).sum())} parts require immediate monitoring.")
-    st.write(f"• Supplier risk concentration visible in ranking above.")
+    st.write(f"• This SKU has a {gap_percent:.1f}% supply gap.")
+    st.write(f"• Supplier: {sku_df.get('Supplier', 'N/A')}")
+    st.write(f"• Current stock covers {((total_stock / required)*100 if required else 0):.1f}% of demand.")
