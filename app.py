@@ -99,7 +99,7 @@ if file:
     total_shortage = int(sku_df["Shortage"].sum())
     gap_percent = int((total_shortage / total_required * 100)) if total_required else 0
 
-    # ---------------- PREMIUM KPI CARDS ----------------
+    # ---------------- KPI ----------------
     col1, col2, col3, col4, col5 = st.columns(5)
 
     def kpi_card(title, value):
@@ -113,7 +113,6 @@ if file:
     col1.markdown(kpi_card("JFM Production Plan",
                            int(production_qty) if not pd.isna(production_qty) else 0),
                   unsafe_allow_html=True)
-
     col2.markdown(kpi_card("Total Required", total_required), unsafe_allow_html=True)
     col3.markdown(kpi_card("Total Stock", total_stock), unsafe_allow_html=True)
     col4.markdown(kpi_card("Total Shortage", total_shortage), unsafe_allow_html=True)
@@ -121,7 +120,7 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- TRUE FG LOGIC ----------------
+    # ---------------- FG LOGIC ----------------
     if (sku_df["TOTAL STOCK"] == 0).any():
         fg_buildable = 0
         production_status = "🔴 BLOCKED – At least one required part has zero stock."
@@ -144,107 +143,46 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- STOCK COVERAGE ----------------
-    st.markdown("### Stock Coverage Analysis")
+    # ---------------- PROCUREMENT PRIORITY (FIXED LOCATION) ----------------
+    st.markdown("### Procurement Priority Score")
 
-    sku_df["Coverage Ratio"] = (
-        sku_df["TOTAL STOCK"] / sku_df["Required"]
+    sku_df["Coverage Ratio"] = np.where(
+        sku_df["Required"] > 0,
+        sku_df["TOTAL STOCK"] / sku_df["Required"],
+        0
+    )
+
+    sku_df["Severity Factor"] = np.where(
+        sku_df["Coverage Ratio"] > 0,
+        1 / sku_df["Coverage Ratio"],
+        10
+    )
+
+    sku_df["Priority Score"] = (
+        sku_df["Shortage"] * sku_df["Severity Factor"]
     ).round(2)
 
-    colA, colB = st.columns(2)
-    colA.metric("Average Coverage", round(sku_df["Coverage Ratio"].mean(), 2))
-    colB.metric("Minimum Coverage", round(sku_df["Coverage Ratio"].min(), 2))
-
-    st.markdown("---")
-
-    # ---------------- CRITICAL PARTS ----------------
-    st.markdown("### Top Critical Parts")
-
-    critical_parts = sku_df.sort_values(
-        ["Shortage", "Coverage Ratio"],
-        ascending=[False, True]
-    ).head(5)
+    priority_parts = sku_df.sort_values(
+        "Priority Score",
+        ascending=False
+    ).head(10)
 
     st.dataframe(
-        critical_parts[[
+        priority_parts[[
             "PART NAME",
-            "Required",
             "TOTAL STOCK",
+            "Required",
             "Shortage",
-            "Coverage Ratio"
+            "Coverage Ratio",
+            "Priority Score",
+            "Supplier"
         ]],
         use_container_width=True
     )
 
     st.markdown("---")
 
-    # ---------------- SHORTAGE CONTRIBUTION ----------------
-    st.markdown("### Shortage Contribution (%)")
-
-    if total_shortage > 0:
-        sku_df["Shortage %"] = (
-            sku_df["Shortage"] / total_shortage * 100
-        ).round(1)
-
-        top_contrib = sku_df.sort_values("Shortage %", ascending=False).head(10)
-
-        fig_contrib = px.bar(
-            top_contrib,
-            x="Shortage %",
-            y="PART NAME",
-            orientation="h",
-            template="plotly_dark"
-        )
-
-        st.plotly_chart(fig_contrib, use_container_width=True)
-    else:
-        st.success("No shortage – Fully Covered")
-
-    st.markdown("---")
-
-    # ---------------- PROCUREMENT PRIORITY ----------------
-    # ---------------- PROCUREMENT PRIORITY (CORRECTED LOGIC) ----------------
-st.markdown("### Procurement Priority Score")
-
-# Avoid division by zero
-sku_df["Coverage Ratio"] = np.where(
-    sku_df["Required"] > 0,
-    sku_df["TOTAL STOCK"] / sku_df["Required"],
-    0
-)
-
-# Severity Factor (higher when coverage is low)
-sku_df["Severity Factor"] = np.where(
-    sku_df["Coverage Ratio"] > 0,
-    1 / sku_df["Coverage Ratio"],
-    10  # Very high severity if zero stock
-)
-
-# Final Priority Score
-sku_df["Priority Score"] = (
-    sku_df["Shortage"] * sku_df["Severity Factor"]
-).round(2)
-
-priority_parts = sku_df.sort_values(
-    "Priority Score",
-    ascending=False
-).head(10)
-
-st.dataframe(
-    priority_parts[[
-        "PART NAME",
-        "TOTAL STOCK",
-        "Required",
-        "Shortage",
-        "Coverage Ratio",
-        "Priority Score",
-        "Supplier"
-    ]],
-    use_container_width=True
-)
-
-
-    # ---------------- PRODUCTION STABILITY INDEX ----------------
+    # ---------------- PRODUCTION STABILITY ----------------
     st.markdown("### Production Stability Index")
 
     if not pd.isna(production_qty) and production_qty > 0:
@@ -294,4 +232,3 @@ st.dataframe(
     )
 
     st.dataframe(styled_df, use_container_width=True)
-
