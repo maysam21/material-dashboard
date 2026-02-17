@@ -66,7 +66,6 @@ if file:
     df.columns = df.columns.str.strip()
     df = df[df["PART NAME"].notna()]
 
-    # Detect SKU columns
     sku_columns = [
         col for col in df.columns
         if any(x in col for x in [
@@ -76,14 +75,11 @@ if file:
 
     selected_sku = st.selectbox("Select SKU", sku_columns)
 
-    # ---------------- JFM PRODUCTION PLAN ----------------
     production_qty = pd.to_numeric(df.iloc[0][selected_sku], errors="coerce")
 
-    # Convert numeric safely
     df["TOTAL STOCK"] = pd.to_numeric(df["TOTAL STOCK"], errors="coerce").fillna(0)
     df["QTY PER M/C"] = pd.to_numeric(df["QTY PER M/C"], errors="coerce").fillna(0)
 
-    # ---- Vertical Logic ----
     sku_df = df[df[selected_sku].notna()].copy()
     sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
     sku_df = sku_df[sku_df["Required"].notna()]
@@ -92,15 +88,19 @@ if file:
         st.warning("No parts mapped for this SKU.")
         st.stop()
 
-    # Shortage
     sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
     sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
 
-    # ---------------- KPI CALCULATIONS ----------------
-    total_required = sku_df["Required"].sum()
-    total_stock = sku_df["TOTAL STOCK"].sum()
-    total_shortage = sku_df["Shortage"].sum()
-    gap_percent = (total_shortage / total_required * 100) if total_required else 0
+    # Convert all numeric to integers
+    sku_df["Required"] = sku_df["Required"].astype(int)
+    sku_df["TOTAL STOCK"] = sku_df["TOTAL STOCK"].astype(int)
+    sku_df["Shortage"] = sku_df["Shortage"].astype(int)
+    sku_df["QTY PER M/C"] = sku_df["QTY PER M/C"].astype(int)
+
+    total_required = int(sku_df["Required"].sum())
+    total_stock = int(sku_df["TOTAL STOCK"].sum())
+    total_shortage = int(sku_df["Shortage"].sum())
+    gap_percent = int((total_shortage / total_required * 100)) if total_required else 0
 
     # ---------------- PREMIUM KPI CARDS ----------------
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -117,16 +117,16 @@ if file:
                            int(production_qty) if not pd.isna(production_qty) else 0),
                   unsafe_allow_html=True)
 
-    col2.markdown(kpi_card("Total Required", f"{total_required:,.0f}"),
+    col2.markdown(kpi_card("Total Required", total_required),
                   unsafe_allow_html=True)
 
-    col3.markdown(kpi_card("Total Stock", f"{total_stock:,.0f}"),
+    col3.markdown(kpi_card("Total Stock", total_stock),
                   unsafe_allow_html=True)
 
-    col4.markdown(kpi_card("Total Shortage", f"{total_shortage:,.0f}"),
+    col4.markdown(kpi_card("Total Shortage", total_shortage),
                   unsafe_allow_html=True)
 
-    col5.markdown(kpi_card("Gap %", f"{gap_percent:.1f}%"),
+    col5.markdown(kpi_card("Gap %", f"{gap_percent}%"),
                   unsafe_allow_html=True)
 
     st.markdown("---")
@@ -146,19 +146,17 @@ if file:
     st.metric("FG Buildable", fg_buildable)
     st.write(production_status)
 
-    # ---------------- PRODUCTION GAP ----------------
     if not pd.isna(production_qty):
-
         production_gap = int(production_qty) - fg_buildable
 
         if production_gap <= 0:
-            st.success("🟢 Production Plan Achievable with Current Stock")
+            st.success("🟢 Production Plan Achievable")
         else:
             st.error(f"🔴 Production Shortfall: {production_gap} Units")
 
     st.markdown("---")
 
-    # ---------------- PART SHORTAGE CHART ----------------
+    # ---------------- SHORTAGE CHART ----------------
     bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
 
     fig = px.bar(
@@ -174,16 +172,16 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- COLOR-CODED TABLE ----------------
+    # ---------------- TEXT COLOR ONLY (TOTAL STOCK COLUMN) ----------------
     st.markdown("### Parts Required for This SKU")
 
-    def highlight_stock(row):
-        if row["TOTAL STOCK"] == 0:
-            return ['background-color: #7f1d1d'] * len(row)  # Red
-        elif row["TOTAL STOCK"] < row["Required"]:
-            return ['background-color: #78350f'] * len(row)  # Amber
+    def color_stock(val, required):
+        if val == 0:
+            return "color: red;"
+        elif val < required:
+            return "color: orange;"
         else:
-            return ['background-color: #064e3b'] * len(row)  # Green
+            return "color: lightgreen;"
 
     styled_df = sku_df[[
         "PART NAME",
@@ -193,6 +191,17 @@ if file:
         "Shortage",
         "Supplier",
         "ETA"
-    ]].style.apply(highlight_stock, axis=1)
+    ]].style.apply(
+        lambda row: [
+            "",
+            "",
+            "",
+            color_stock(row["TOTAL STOCK"], row["Required"]),
+            "",
+            "",
+            ""
+        ],
+        axis=1
+    )
 
     st.dataframe(styled_df, use_container_width=True)
