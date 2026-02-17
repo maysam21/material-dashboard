@@ -203,27 +203,46 @@ if file:
     st.markdown("---")
 
     # ---------------- PROCUREMENT PRIORITY ----------------
-    st.markdown("### Procurement Priority Score")
+    # ---------------- PROCUREMENT PRIORITY (CORRECTED LOGIC) ----------------
+st.markdown("### Procurement Priority Score")
 
-    sku_df["Priority Score"] = sku_df["Shortage"] * sku_df["Required"]
+# Avoid division by zero
+sku_df["Coverage Ratio"] = np.where(
+    sku_df["Required"] > 0,
+    sku_df["TOTAL STOCK"] / sku_df["Required"],
+    0
+)
 
-    priority_parts = sku_df.sort_values(
+# Severity Factor (higher when coverage is low)
+sku_df["Severity Factor"] = np.where(
+    sku_df["Coverage Ratio"] > 0,
+    1 / sku_df["Coverage Ratio"],
+    10  # Very high severity if zero stock
+)
+
+# Final Priority Score
+sku_df["Priority Score"] = (
+    sku_df["Shortage"] * sku_df["Severity Factor"]
+).round(2)
+
+priority_parts = sku_df.sort_values(
+    "Priority Score",
+    ascending=False
+).head(10)
+
+st.dataframe(
+    priority_parts[[
+        "PART NAME",
+        "TOTAL STOCK",
+        "Required",
+        "Shortage",
+        "Coverage Ratio",
         "Priority Score",
-        ascending=False
-    ).head(10)
+        "Supplier"
+    ]],
+    use_container_width=True
+)
 
-    st.dataframe(
-        priority_parts[[
-            "PART NAME",
-            "Shortage",
-            "Required",
-            "Priority Score",
-            "Supplier"
-        ]],
-        use_container_width=True
-    )
-
-    st.markdown("---")
 
     # ---------------- PRODUCTION STABILITY INDEX ----------------
     st.markdown("### Production Stability Index")
@@ -275,3 +294,4 @@ if file:
     )
 
     st.dataframe(styled_df, use_container_width=True)
+
