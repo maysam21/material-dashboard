@@ -2,11 +2,22 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-import math
+import os
 
 st.set_page_config(layout="wide")
 
-st.title("SKU Wise – Production Clarity Dashboard")
+# ---------------- SAFE LOGO HEADER ----------------
+col_logo, col_title = st.columns([1, 4])
+
+with col_logo:
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=120)
+
+with col_title:
+    st.markdown(
+        "<h2 style='padding-top:20px;'>SKU Wise – Production Clarity Dashboard</h2>",
+        unsafe_allow_html=True
+    )
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
@@ -39,11 +50,14 @@ if file:
     df["QTY PER M/C"] = pd.to_numeric(df["QTY PER M/C"], errors="coerce").fillna(0)
 
     # ---- Vertical Logic ----
-    required_series = df[selected_sku]
-    sku_df = df[required_series.notna()].copy()
+    sku_df = df[df[selected_sku].notna()].copy()
 
     sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
     sku_df = sku_df[sku_df["Required"].notna()]
+
+    if sku_df.empty:
+        st.warning("No parts mapped for this SKU.")
+        st.stop()
 
     # Shortage
     sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
@@ -66,35 +80,31 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- NEW FG LOGIC (YOUR REQUEST) ----------------
     # ---------------- TRUE FG LOGIC ----------------
+    if (sku_df["TOTAL STOCK"] == 0).any():
+        fg_buildable = 0
+        production_status = "🔴 BLOCKED – At least one required part has zero stock."
+    else:
+        sku_df["Possible_FG_From_Part"] = np.floor(
+            sku_df["TOTAL STOCK"] / sku_df["Required"]
+        )
+        fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
+        production_status = "🟢 Production Feasible"
 
-# If any required part has zero stock → production = 0
-if (sku_df["TOTAL STOCK"] == 0).any():
-    fg_buildable = 0
-    production_status = "🔴 BLOCKED – At least one required part has zero stock."
-else:
-    sku_df["Possible_FG_From_Part"] = np.floor(
-        sku_df["TOTAL STOCK"] / sku_df["Required"]
-    )
-    fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
-    production_status = "🟢 Production Feasible"
+    st.markdown("### Production Feasibility")
+    st.metric("FG Buildable", fg_buildable)
+    st.write(production_status)
 
-st.markdown("### Production Feasibility")
+    # Show bottleneck part if possible
+    if fg_buildable > 0:
+        bottleneck_part = sku_df.loc[
+            sku_df["Possible_FG_From_Part"].idxmin()
+        ]["PART NAME"]
+        st.write(f"**Bottleneck Part:** {bottleneck_part}")
 
-st.metric("FG Buildable", fg_buildable)
-st.write(production_status)
+    st.markdown("---")
 
-# Identify bottleneck part only if production possible
-if fg_buildable > 0:
-    bottleneck_part = sku_df.loc[
-        sku_df["Possible_FG_From_Part"].idxmin()
-    ]["PART NAME"]
-
-    st.write(f"**Bottleneck Part:** {bottleneck_part}")
-
-
-    # ---------------- TOP BOTTLENECK PARTS ----------------
+    # ---------------- TOP BOTTLENECK PARTS (ALWAYS SHOW) ----------------
     bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
 
     fig = px.bar(
@@ -103,7 +113,7 @@ if fg_buildable > 0:
         y="PART NAME",
         orientation="h",
         template="plotly_dark",
-        title=f"Bottleneck Parts – {selected_sku}"
+        title=f"Part Shortage Overview – {selected_sku}"
     )
 
     st.plotly_chart(fig, use_container_width=True)
