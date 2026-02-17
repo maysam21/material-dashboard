@@ -1,12 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import numpy as np
 
 st.set_page_config(layout="wide")
 
-st.title("Material Planning – SKU Intelligence Dashboard")
+st.title("SKU Intelligence – Production Clarity Dashboard")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
@@ -15,109 +14,92 @@ if file:
     excel = pd.ExcelFile(file)
     sheet = st.selectbox("Business Unit", excel.sheet_names)
 
+    # Read sheet with correct header
     df = pd.read_excel(excel, sheet_name=sheet, header=1)
     df.columns = df.columns.str.strip()
 
+    # Keep only rows where PART NAME exists
     df = df[df["PART NAME"].notna()]
 
-    # Convert numeric safely
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="ignore")
+    # Detect SKU columns dynamically
+    sku_columns = [
+        col for col in df.columns
+        if any(x in col for x in [
+            "Arista", "Asteria", "Eris", "Elara", "Cube", "ORION"
+        ])
+    ]
 
-    sku_list = df["PART NUMBER"].dropna().unique()
-    selected_sku = st.selectbox("Select SKU (Part Number)", sku_list)
+    selected_sku = st.selectbox("Select SKU", sku_columns)
 
-    sku_df = df[df["PART NUMBER"] == selected_sku].iloc[0]
+    # Convert stock safely
+    df["TOTAL STOCK"] = pd.to_numeric(df["TOTAL STOCK"], errors="coerce").fillna(0)
 
-    # ---------------- CORE METRICS ----------------
-    total_stock = pd.to_numeric(sku_df["TOTAL STOCK"], errors="coerce")
-    shortage = pd.to_numeric(sku_df["Shortage"], errors="coerce")
-    required = total_stock + shortage
+    # ---- VERTICAL LOGIC ----
+    # Required only if cell is NOT blank
 
-    gap_percent = (shortage / required * 100) if required else 0
+    required_series = df[selected_sku]
 
-    # Risk classification
-    if gap_percent > 40:
-        risk = "🔴 CRITICAL"
-        color = "red"
-    elif gap_percent > 20:
-        risk = "🟡 WATCH"
-        color = "orange"
-    else:
-        risk = "🟢 HEALTHY"
-        color = "green"
+    # Keep only rows where SKU cell is NOT blank
+    sku_df = df[required_series.notna()].copy()
 
-    # ---------------- KPI ROW ----------------
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Convert required qty safely
+    sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
 
-    col1.metric("Required", f"{required:,.0f}")
-    col2.metric("Stock", f"{total_stock:,.0f}")
-    col3.metric("Shortage", f"{shortage:,.0f}")
+    # Drop rows where conversion failed
+    sku_df = sku_df[sku_df["Required"].notna()]
+
+    # Shortage calculation
+    sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
+    sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
+
+    # ---------------- KPI ----------------
+    total_required = sku_df["Required"].sum()
+    total_stock = sku_df["TOTAL STOCK"].sum()
+    total_shortage = sku_df["Shortage"].sum()
+
+    gap_percent = (total_shortage / total_required * 100) if total_required else 0
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Total Required", f"{total_required:,.0f}")
+    col2.metric("Total Stock", f"{total_stock:,.0f}")
+    col3.metric("Total Shortage", f"{total_shortage:,.0f}")
     col4.metric("Gap %", f"{gap_percent:.1f}%")
-    col5.markdown(f"<h3 style='color:{color}'>{risk}</h3>", unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ---------------- MODEL BREAKDOWN ----------------
-    model_cols = [
-        col for col in df.columns
-        if any(x in col for x in ["Arista", "Asteria", "BLDC"])
-    ]
-
-    model_data = []
-    for model in model_cols:
-        val = pd.to_numeric(sku_df[model], errors="coerce")
-        if not pd.isna(val):
-            model_data.append({"Model": model, "Demand": val})
-
-    model_df = pd.DataFrame(model_data)
-
-    colA, colB = st.columns(2)
-
-    if not model_df.empty:
-        fig_model = px.bar(
-            model_df,
-            x="Model",
-            y="Demand",
-            template="plotly_dark",
-            title="Model-wise Demand"
-        )
-        colA.plotly_chart(fig_model, use_container_width=True)
-
-    # ---------------- STOCK vs SHORTAGE ----------------
-    fig_donut = go.Figure(data=[go.Pie(
-        labels=["Stock", "Shortage"],
-        values=[total_stock, shortage],
-        hole=0.65
-    )])
-
-    fig_donut.update_layout(
-        template="plotly_dark",
-        title="Supply Position"
+    # ---------------- PRODUCTION FEASIBILITY ----------------
+    sku_df["Build Capacity"] = np.where(
+        sku_df["Required"] > 0,
+        sku_df["TOTAL STOCK"] / sku_df["Required"],
+        np.inf
     )
 
-    colB.plotly_chart(fig_donut, use_container_width=True)
+    max_build_units = int(sku_df["Build Capacity"].min()) if not sku_df.empty else 0
+
+    st.markdown(f"### Production Feasibility")
+    st.write(f"Based on current stock, you can build approximately **{max_build_units} units** of {selected_sku}.")
 
     st.markdown("---")
 
-    # ---------------- PROCUREMENT DETAILS ----------------
-    st.markdown("### Procurement & Supply Details")
+    # ---------------- TOP BOTTLENECK PARTS ----------------
+    bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
 
-    details_cols = [
-        "Supplier", "PO Number", "ETA", "Received Qty"
-    ]
+    fig = px.bar(
+        bottleneck,
+        x="Shortage",
+        y="PART NAME",
+        orientation="h",
+        template="plotly_dark",
+        title=f"Bottleneck Parts – {selected_sku}"
+    )
 
-    detail_data = {}
-    for col in details_cols:
-        if col in df.columns:
-            detail_data[col] = sku_df[col]
-
-    st.table(pd.DataFrame(detail_data.items(), columns=["Field", "Value"]))
+    st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
-    st.markdown("### Executive Insight")
-
-    st.write(f"• This SKU has a {gap_percent:.1f}% supply gap.")
-    st.write(f"• Supplier: {sku_df.get('Supplier', 'N/A')}")
-    st.write(f"• Current stock covers {((total_stock / required)*100 if required else 0):.1f}% of demand.")
+    st.markdown("### Parts Required for This SKU")
+    st.dataframe(
+        sku_df[["PART NAME", "Required", "TOTAL STOCK", "Shortage", "Supplier", "ETA"]],
+        use_container_width=True
+    )
