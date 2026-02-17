@@ -67,20 +67,32 @@ if file:
     st.markdown("---")
 
     # ---------------- NEW FG LOGIC (YOUR REQUEST) ----------------
-    total_qty_per_machine = sku_df["QTY PER M/C"].sum()
-    total_stock_available = sku_df["TOTAL STOCK"].sum()
+    # ---------------- TRUE FG LOGIC ----------------
 
-    fg_buildable = math.floor(
-        total_stock_available / total_qty_per_machine
-    ) if total_qty_per_machine > 0 else 0
-
-    st.markdown("### Production Feasibility (Aggregated Logic)")
-    st.write(
-        f"Based on total stock and total QTY PER M/C, "
-        f"you can build approximately **{fg_buildable} units** of {selected_sku}."
+# If any required part has zero stock → production = 0
+if (sku_df["TOTAL STOCK"] == 0).any():
+    fg_buildable = 0
+    production_status = "🔴 BLOCKED – At least one required part has zero stock."
+else:
+    sku_df["Possible_FG_From_Part"] = np.floor(
+        sku_df["TOTAL STOCK"] / sku_df["Required"]
     )
+    fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
+    production_status = "🟢 Production Feasible"
 
-    st.markdown("---")
+st.markdown("### Production Feasibility")
+
+st.metric("FG Buildable", fg_buildable)
+st.write(production_status)
+
+# Identify bottleneck part only if production possible
+if fg_buildable > 0:
+    bottleneck_part = sku_df.loc[
+        sku_df["Possible_FG_From_Part"].idxmin()
+    ]["PART NAME"]
+
+    st.write(f"**Bottleneck Part:** {bottleneck_part}")
+
 
     # ---------------- TOP BOTTLENECK PARTS ----------------
     bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
@@ -111,3 +123,4 @@ if file:
         ]],
         use_container_width=True
     )
+
