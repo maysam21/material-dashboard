@@ -6,17 +6,7 @@ import math
 
 st.set_page_config(layout="wide")
 
-# ---------------- HEADER ----------------
-col_logo, col_title = st.columns([1, 4])
-
-with col_logo:
-    st.image("https://www.google.com/imgres?q=beyond%20appliances%20logo&imgurl=https%3A%2F%2Fbeyondappliances.in%2Fcdn%2Fshop%2Ffiles%2FBYD_logo_black.png%3Fv%3D1748930755%26width%3D1200&imgrefurl=https%3A%2F%2Fbeyondappliances.in%2F&docid=9cSpptal-yxw6M&tbnid=J3RPTYWZs-JfQM&vet=12ahUKEwjF7bq2_9-SAxX1zzgGHcilH8sQnPAOegQIFRAB..i&w=1200&h=628&hcb=2&ved=2ahUKEwjF7bq2_9-SAxX1zzgGHcilH8sQnPAOegQIFRAB", width=120)
-
-with col_title:
-    st.markdown(
-        "<h2 style='padding-top:20px;'>Production Intelligence Command Center</h2>",
-        unsafe_allow_html=True
-    )
+st.title("SKU Wise – Production Clarity Dashboard")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
@@ -25,13 +15,13 @@ if file:
     excel = pd.ExcelFile(file)
     sheet = st.selectbox("Business Unit", excel.sheet_names)
 
+    # Read sheet
     df = pd.read_excel(excel, sheet_name=sheet, header=1)
     df.columns = df.columns.str.strip()
+
     df = df[df["PART NAME"].notna()]
 
-    df["TOTAL STOCK"] = pd.to_numeric(df["TOTAL STOCK"], errors="coerce").fillna(0)
-    df["QTY PER M/C"] = pd.to_numeric(df["QTY PER M/C"], errors="coerce").fillna(0)
-
+    # Detect SKU columns
     sku_columns = [
         col for col in df.columns
         if any(x in col for x in [
@@ -39,164 +29,97 @@ if file:
         ])
     ]
 
-    # ---------------- MULTI SKU FEASIBILITY ----------------
-    multi_sku_results = []
+    selected_sku = st.selectbox("Select SKU", sku_columns)
 
-    for sku in sku_columns:
-        temp_df = df[df[sku].notna()].copy()
-        temp_df["Required"] = pd.to_numeric(temp_df[sku], errors="coerce")
-        temp_df = temp_df[temp_df["Required"].notna()]
+    # ---------------- JFM PRODUCTION PLAN ----------------
+    production_qty = pd.to_numeric(df.iloc[0][selected_sku], errors="coerce")
 
-        if temp_df.empty or (temp_df["TOTAL STOCK"] == 0).any():
-            fg = 0
-        else:
-            temp_df["Possible"] = np.floor(
-                temp_df["TOTAL STOCK"] / temp_df["Required"]
-            )
-            fg = int(temp_df["Possible"].min())
+    # Convert numeric safely
+    df["TOTAL STOCK"] = pd.to_numeric(df["TOTAL STOCK"], errors="coerce").fillna(0)
+    df["QTY PER M/C"] = pd.to_numeric(df["QTY PER M/C"], errors="coerce").fillna(0)
 
-        multi_sku_results.append({"SKU": sku, "FG Buildable": fg})
+    # ---- Vertical Logic ----
+    required_series = df[selected_sku]
+    sku_df = df[required_series.notna()].copy()
 
-    multi_df = pd.DataFrame(multi_sku_results)
+    sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
+    sku_df = sku_df[sku_df["Required"].notna()]
 
-    st.markdown("### Multi-SKU Feasibility Overview")
+    # Shortage
+    sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
+    sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
 
-    fig_multi = px.bar(
-        multi_df,
-        x="SKU",
-        y="FG Buildable",
-        template="plotly_dark"
+    # ---------------- KPI ----------------
+    total_required = sku_df["Required"].sum()
+    total_stock = sku_df["TOTAL STOCK"].sum()
+    total_shortage = sku_df["Shortage"].sum()
+
+    gap_percent = (total_shortage / total_required * 100) if total_required else 0
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    col1.metric("JFM Production Plan", int(production_qty) if not pd.isna(production_qty) else 0)
+    col2.metric("Total Required", f"{total_required:,.0f}")
+    col3.metric("Total Stock", f"{total_stock:,.0f}")
+    col4.metric("Total Shortage", f"{total_shortage:,.0f}")
+    col5.metric("Gap %", f"{gap_percent:.1f}%")
+
+    st.markdown("---")
+
+    # ---------------- NEW FG LOGIC (YOUR REQUEST) ----------------
+    # ---------------- TRUE FG LOGIC ----------------
+
+# If any required part has zero stock → production = 0
+if (sku_df["TOTAL STOCK"] == 0).any():
+    fg_buildable = 0
+    production_status = "🔴 BLOCKED – At least one required part has zero stock."
+else:
+    sku_df["Possible_FG_From_Part"] = np.floor(
+        sku_df["TOTAL STOCK"] / sku_df["Required"]
     )
-    st.plotly_chart(fig_multi, use_container_width=True)
+    fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
+    production_status = "🟢 Production Feasible"
 
-    # ---------------- SKU SELECTION ----------------
-    colA, colB = st.columns(2)
-    selected_sku = colA.selectbox("Select Primary SKU", sku_columns)
-    compare_sku = colB.selectbox("Compare With SKU", sku_columns)
+st.markdown("### Production Feasibility")
 
-    def calculate_sku(sku_name):
-        sku_df = df[df[sku_name].notna()].copy()
-        sku_df["Required"] = pd.to_numeric(sku_df[sku_name], errors="coerce")
-        sku_df = sku_df[sku_df["Required"].notna()]
+st.metric("FG Buildable", fg_buildable)
+st.write(production_status)
 
-        if sku_df.empty or (sku_df["TOTAL STOCK"] == 0).any():
-            fg = 0
-        else:
-            sku_df["Possible"] = np.floor(
-                sku_df["TOTAL STOCK"] / sku_df["Required"]
-            )
-            fg = int(sku_df["Possible"].min())
+# Identify bottleneck part only if production possible
+if fg_buildable > 0:
+    bottleneck_part = sku_df.loc[
+        sku_df["Possible_FG_From_Part"].idxmin()
+    ]["PART NAME"]
 
-        return fg, sku_df
-
-    fg_primary, sku_df = calculate_sku(selected_sku)
-    fg_compare, _ = calculate_sku(compare_sku)
-
-    # ---------------- WHAT-IF PLANNER ----------------
-    st.markdown("### What-If Production Planner")
-
-    target_qty = st.number_input(
-        "Enter Target FG Quantity",
-        min_value=0,
-        step=10
-    )
-
-    if target_qty > 0:
-        sku_df["Required_for_Target"] = sku_df["Required"] * target_qty
-        sku_df["Additional_Needed"] = (
-            sku_df["Required_for_Target"] - sku_df["TOTAL STOCK"]
-        ).apply(lambda x: x if x > 0 else 0)
-
-        critical_parts = sku_df[sku_df["Additional_Needed"] > 0]
-        st.write(f"{len(critical_parts)} parts need procurement to meet target.")
+    st.write(f"**Bottleneck Part:** {bottleneck_part}")
 
 
-        st.write(f"Additional parts required to achieve target: {int(total_additional)} units")
+    # ---------------- TOP BOTTLENECK PARTS ----------------
+    bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
 
-    # ---------------- FORECAST AFTER ETA ----------------
-    st.markdown("### Forecast After Incoming ETA Stock")
-
-    if "Incoming Qty" in df.columns:
-        df["Incoming Qty"] = pd.to_numeric(df["Incoming Qty"], errors="coerce").fillna(0)
-
-        forecast_stock = sku_df["TOTAL STOCK"] + sku_df["Incoming Qty"]
-
-        sku_df["Forecast_FG"] = np.floor(
-            forecast_stock / sku_df["Required"]
-        )
-
-        forecast_fg = int(sku_df["Forecast_FG"].min())
-
-        st.write(f"Projected FG Buildable After Incoming Stock: {forecast_fg}")
-
-    # ---------------- FINANCIAL IMPACT ----------------
-    st.markdown("### Financial Impact Analysis")
-
-    if "Rate" in df.columns:
-        df["Rate"] = pd.to_numeric(df["Rate"], errors="coerce").fillna(0)
-
-        sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
-        sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
-
-        sku_df["Financial Impact"] = sku_df["Shortage"] * sku_df["Rate"]
-
-        total_impact = sku_df["Financial Impact"].sum()
-
-        st.metric("Total Financial Exposure (₹)", f"{int(total_impact):,}")
-
-    # ---------------- RISK HEATMAP ----------------
-    # ---------------- SAFE RISK HEATMAP ----------------
-st.markdown("### Risk Heatmap Matrix")
-
-try:
-    sku_df["Demand Level"] = pd.qcut(
-        sku_df["Required"].rank(method="first"),
-        3,
-        labels=["Low", "Medium", "High"]
+    fig = px.bar(
+        bottleneck,
+        x="Shortage",
+        y="PART NAME",
+        orientation="h",
+        template="plotly_dark",
+        title=f"Bottleneck Parts – {selected_sku}"
     )
 
-    sku_df["Stock Risk"] = pd.qcut(
-        sku_df["TOTAL STOCK"].rank(method="first"),
-        3,
-        labels=["Low", "Medium", "High"]
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+
+    st.markdown("### Parts Required for This SKU")
+    st.dataframe(
+        sku_df[[
+            "PART NAME",
+            "QTY PER M/C",
+            "Required",
+            "TOTAL STOCK",
+            "Shortage",
+            "Supplier",
+            "ETA"
+        ]],
+        use_container_width=True
     )
-
-    heat_data = sku_df.groupby(
-        ["Demand Level", "Stock Risk"]
-    ).size().reset_index(name="Count")
-
-    fig_heat = px.density_heatmap(
-        heat_data,
-        x="Demand Level",
-        y="Stock Risk",
-        z="Count",
-        template="plotly_dark"
-    )
-
-    st.plotly_chart(fig_heat, use_container_width=True)
-
-except Exception:
-    st.info("Not enough variation in data to generate heatmap.")
-
-
-    # ---------------- SKU COMPARISON ----------------
-    st.markdown("### SKU Comparison")
-
-    compare_df = pd.DataFrame({
-        "SKU": [selected_sku, compare_sku],
-        "FG Buildable": [fg_primary, fg_compare]
-    })
-
-    fig_compare = px.bar(
-        compare_df,
-        x="SKU",
-        y="FG Buildable",
-        template="plotly_dark"
-    )
-    st.plotly_chart(fig_compare, use_container_width=True)
-
-
-
-
-
-
