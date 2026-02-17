@@ -7,10 +7,12 @@ import math
 st.set_page_config(layout="wide")
 
 # ---------------- HEADER ----------------
-#col_logo, col_title = st.columns([1, 4])
-#with col_logo:
-    #st.image("logo.png", width=120)
-#with col_title:
+col_logo, col_title = st.columns([1, 4])
+
+with col_logo:
+    st.image("https://www.google.com/imgres?q=beyond%20appliances%20logo&imgurl=https%3A%2F%2Fbeyondappliances.in%2Fcdn%2Fshop%2Ffiles%2FBYD_logo_black.png%3Fv%3D1748930755%26width%3D1200&imgrefurl=https%3A%2F%2Fbeyondappliances.in%2F&docid=9cSpptal-yxw6M&tbnid=J3RPTYWZs-JfQM&vet=12ahUKEwjF7bq2_9-SAxX1zzgGHcilH8sQnPAOegQIFRAB..i&w=1200&h=628&hcb=2&ved=2ahUKEwjF7bq2_9-SAxX1zzgGHcilH8sQnPAOegQIFRAB", width=120)
+
+with col_title:
     st.markdown(
         "<h2 style='padding-top:20px;'>Production Intelligence Command Center</h2>",
         unsafe_allow_html=True
@@ -183,6 +185,7 @@ if file:
         template="plotly_dark"
     )
     st.plotly_chart(fig_compare, use_container_width=True)
+
 
 
 
