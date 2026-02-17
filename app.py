@@ -5,7 +5,7 @@ import numpy as np
 
 st.set_page_config(layout="wide")
 
-st.title("SKU Intelligence – Production Clarity Dashboard")
+st.title("SKU Wise – Production Clarity Dashboard")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
@@ -103,3 +103,4 @@ if file:
         sku_df[["PART NAME", "Required", "TOTAL STOCK", "Shortage", "Supplier", "ETA"]],
         use_container_width=True
     )
+
