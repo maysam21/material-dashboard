@@ -44,14 +44,11 @@ col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
     if logo_data:
-        st.markdown(
-            f'<img src="{logo_data}" width="120">',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<img src="{logo_data}" width="120">', unsafe_allow_html=True)
 
 with col_title:
     st.markdown(
-        "<h2 style='padding-top:20px;'>SKU Wise – Production Clarity Dashboard</h2>",
+        "<h2 style='padding-top:20px;'>SKU Wise – Production Intelligence Dashboard</h2>",
         unsafe_allow_html=True
     )
 
@@ -91,7 +88,7 @@ if file:
     sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
     sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
 
-    # Convert all numeric to integers
+    # Convert to integers
     sku_df["Required"] = sku_df["Required"].astype(int)
     sku_df["TOTAL STOCK"] = sku_df["TOTAL STOCK"].astype(int)
     sku_df["Shortage"] = sku_df["Shortage"].astype(int)
@@ -117,17 +114,10 @@ if file:
                            int(production_qty) if not pd.isna(production_qty) else 0),
                   unsafe_allow_html=True)
 
-    col2.markdown(kpi_card("Total Required", total_required),
-                  unsafe_allow_html=True)
-
-    col3.markdown(kpi_card("Total Stock", total_stock),
-                  unsafe_allow_html=True)
-
-    col4.markdown(kpi_card("Total Shortage", total_shortage),
-                  unsafe_allow_html=True)
-
-    col5.markdown(kpi_card("Gap %", f"{gap_percent}%"),
-                  unsafe_allow_html=True)
+    col2.markdown(kpi_card("Total Required", total_required), unsafe_allow_html=True)
+    col3.markdown(kpi_card("Total Stock", total_stock), unsafe_allow_html=True)
+    col4.markdown(kpi_card("Total Shortage", total_shortage), unsafe_allow_html=True)
+    col5.markdown(kpi_card("Gap %", f"{gap_percent}%"), unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -142,13 +132,11 @@ if file:
         fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
         production_status = "🟢 Production Feasible"
 
-    st.markdown("### Production Feasibility")
     st.metric("FG Buildable", fg_buildable)
     st.write(production_status)
 
     if not pd.isna(production_qty):
         production_gap = int(production_qty) - fg_buildable
-
         if production_gap <= 0:
             st.success("🟢 Production Plan Achievable")
         else:
@@ -156,23 +144,105 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- SHORTAGE CHART ----------------
-    bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
+    # ---------------- STOCK COVERAGE ----------------
+    st.markdown("### Stock Coverage Analysis")
 
-    fig = px.bar(
-        bottleneck,
-        x="Shortage",
-        y="PART NAME",
-        orientation="h",
-        template="plotly_dark",
-        title=f"Part Shortage Overview – {selected_sku}"
-    )
+    sku_df["Coverage Ratio"] = (
+        sku_df["TOTAL STOCK"] / sku_df["Required"]
+    ).round(2)
 
-    st.plotly_chart(fig, use_container_width=True)
+    colA, colB = st.columns(2)
+    colA.metric("Average Coverage", round(sku_df["Coverage Ratio"].mean(), 2))
+    colB.metric("Minimum Coverage", round(sku_df["Coverage Ratio"].min(), 2))
 
     st.markdown("---")
 
-    # ---------------- TEXT COLOR ONLY (TOTAL STOCK COLUMN) ----------------
+    # ---------------- CRITICAL PARTS ----------------
+    st.markdown("### Top Critical Parts")
+
+    critical_parts = sku_df.sort_values(
+        ["Shortage", "Coverage Ratio"],
+        ascending=[False, True]
+    ).head(5)
+
+    st.dataframe(
+        critical_parts[[
+            "PART NAME",
+            "Required",
+            "TOTAL STOCK",
+            "Shortage",
+            "Coverage Ratio"
+        ]],
+        use_container_width=True
+    )
+
+    st.markdown("---")
+
+    # ---------------- SHORTAGE CONTRIBUTION ----------------
+    st.markdown("### Shortage Contribution (%)")
+
+    if total_shortage > 0:
+        sku_df["Shortage %"] = (
+            sku_df["Shortage"] / total_shortage * 100
+        ).round(1)
+
+        top_contrib = sku_df.sort_values("Shortage %", ascending=False).head(10)
+
+        fig_contrib = px.bar(
+            top_contrib,
+            x="Shortage %",
+            y="PART NAME",
+            orientation="h",
+            template="plotly_dark"
+        )
+
+        st.plotly_chart(fig_contrib, use_container_width=True)
+    else:
+        st.success("No shortage – Fully Covered")
+
+    st.markdown("---")
+
+    # ---------------- PROCUREMENT PRIORITY ----------------
+    st.markdown("### Procurement Priority Score")
+
+    sku_df["Priority Score"] = sku_df["Shortage"] * sku_df["Required"]
+
+    priority_parts = sku_df.sort_values(
+        "Priority Score",
+        ascending=False
+    ).head(10)
+
+    st.dataframe(
+        priority_parts[[
+            "PART NAME",
+            "Shortage",
+            "Required",
+            "Priority Score",
+            "Supplier"
+        ]],
+        use_container_width=True
+    )
+
+    st.markdown("---")
+
+    # ---------------- PRODUCTION STABILITY INDEX ----------------
+    st.markdown("### Production Stability Index")
+
+    if not pd.isna(production_qty) and production_qty > 0:
+        stability_index = int((fg_buildable / production_qty) * 100)
+    else:
+        stability_index = 0
+
+    if stability_index >= 100:
+        st.success(f"🟢 Stability Index: {stability_index}%")
+    elif stability_index >= 70:
+        st.warning(f"🟡 Stability Index: {stability_index}%")
+    else:
+        st.error(f"🔴 Stability Index: {stability_index}%")
+
+    st.markdown("---")
+
+    # ---------------- COLOR-CODED TABLE ----------------
     st.markdown("### Parts Required for This SKU")
 
     def color_stock(val, required):
