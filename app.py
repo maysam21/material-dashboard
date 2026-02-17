@@ -2,36 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-import math
 
 st.set_page_config(layout="wide")
 
-# --------- PREMIUM DARK UI ---------
-st.markdown("""
-<style>
-body { background-color: #0b1c2d; }
-.block-container { padding-top: 1rem; }
-
-.kpi-card {
-    background: linear-gradient(145deg, #13263c, #0b1c2d);
-    padding: 20px;
-    border-radius: 16px;
-    text-align: center;
-    color: white;
-    box-shadow: 0px 8px 30px rgba(0,0,0,0.4);
-}
-.kpi-value {
-    font-size: 28px;
-    font-weight: bold;
-}
-.kpi-title {
-    font-size: 14px;
-    color: #9ca3af;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.title("SKU Intelligence – AI Production Engine")
+st.title("SKU Intelligence – Production Clarity Dashboard")
 
 file = st.file_uploader("Upload Material Planning Excel", type=["xlsx"])
 
@@ -40,11 +14,14 @@ if file:
     excel = pd.ExcelFile(file)
     sheet = st.selectbox("Business Unit", excel.sheet_names)
 
+    # Read sheet with correct header
     df = pd.read_excel(excel, sheet_name=sheet, header=1)
     df.columns = df.columns.str.strip()
+
+    # Keep only rows where PART NAME exists
     df = df[df["PART NAME"].notna()]
 
-    # Detect SKU columns
+    # Detect SKU columns dynamically
     sku_columns = [
         col for col in df.columns
         if any(x in col for x in [
@@ -54,95 +31,75 @@ if file:
 
     selected_sku = st.selectbox("Select SKU", sku_columns)
 
+    # Convert stock safely
     df["TOTAL STOCK"] = pd.to_numeric(df["TOTAL STOCK"], errors="coerce").fillna(0)
 
-    # Only parts used in selected SKU (vertical check)
-    sku_df = df[df[selected_sku].notna()].copy()
+    # ---- VERTICAL LOGIC ----
+    # Required only if cell is NOT blank
 
-    sku_df["Required_per_FG"] = pd.to_numeric(
-        sku_df[selected_sku], errors="coerce"
-    )
+    required_series = df[selected_sku]
 
-    sku_df = sku_df[sku_df["Required_per_FG"].notna()]
+    # Keep only rows where SKU cell is NOT blank
+    sku_df = df[required_series.notna()].copy()
 
-    # -------- AI PRODUCTION FEASIBILITY --------
-    sku_df["FG_Possible_From_Part"] = sku_df.apply(
-        lambda row: math.floor(
-            row["TOTAL STOCK"] / row["Required_per_FG"]
-        ) if row["Required_per_FG"] > 0 else 0,
-        axis=1
-    )
+    # Convert required qty safely
+    sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
 
-    max_fg_possible = sku_df["FG_Possible_From_Part"].min()
-    bottleneck_part = sku_df.loc[
-        sku_df["FG_Possible_From_Part"].idxmin()
-    ]["PART NAME"]
+    # Drop rows where conversion failed
+    sku_df = sku_df[sku_df["Required"].notna()]
 
-    # -------- KPI SECTION --------
+    # Shortage calculation
+    sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
+    sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
+
+    # ---------------- KPI ----------------
+    total_required = sku_df["Required"].sum()
+    total_stock = sku_df["TOTAL STOCK"].sum()
+    total_shortage = sku_df["Shortage"].sum()
+
+    gap_percent = (total_shortage / total_required * 100) if total_required else 0
+
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{int(max_fg_possible)}</div>
-        <div class="kpi-title">Max FG Buildable</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col2.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{bottleneck_part}</div>
-        <div class="kpi-title">Bottleneck Part</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    total_parts = len(sku_df)
-
-    col3.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{total_parts}</div>
-        <div class="kpi-title">Parts Used</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    risk_parts = len(sku_df[sku_df["FG_Possible_From_Part"] == max_fg_possible])
-
-    col4.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{risk_parts}</div>
-        <div class="kpi-title">Critical Constraints</div>
-    </div>
-    """, unsafe_allow_html=True)
+    col1.metric("Total Required", f"{total_required:,.0f}")
+    col2.metric("Total Stock", f"{total_stock:,.0f}")
+    col3.metric("Total Shortage", f"{total_shortage:,.0f}")
+    col4.metric("Gap %", f"{gap_percent:.1f}%")
 
     st.markdown("---")
 
-    # -------- VISUAL BOTTLENECK ANALYSIS --------
-    top_constraints = sku_df.sort_values(
-        "FG_Possible_From_Part"
-    ).head(10)
+    # ---------------- PRODUCTION FEASIBILITY ----------------
+    sku_df["Build Capacity"] = np.where(
+        sku_df["Required"] > 0,
+        sku_df["TOTAL STOCK"] / sku_df["Required"],
+        np.inf
+    )
+
+    max_build_units = int(sku_df["Build Capacity"].min()) if not sku_df.empty else 0
+
+    st.markdown(f"### Production Feasibility")
+    st.write(f"Based on current stock, you can build approximately **{max_build_units} units** of {selected_sku}.")
+
+    st.markdown("---")
+
+    # ---------------- TOP BOTTLENECK PARTS ----------------
+    bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
 
     fig = px.bar(
-        top_constraints,
-        x="FG_Possible_From_Part",
+        bottleneck,
+        x="Shortage",
         y="PART NAME",
         orientation="h",
         template="plotly_dark",
-        title=f"Production Limiting Parts – {selected_sku}"
+        title=f"Bottleneck Parts – {selected_sku}"
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
 
-    st.markdown("### Detailed AI Breakdown")
-
+    st.markdown("### Parts Required for This SKU")
     st.dataframe(
-        sku_df[[
-            "PART NAME",
-            "Required_per_FG",
-            "TOTAL STOCK",
-            "FG_Possible_From_Part",
-            "Supplier",
-            "ETA"
-        ]].sort_values("FG_Possible_From_Part"),
+        sku_df[["PART NAME", "Required", "TOTAL STOCK", "Shortage", "Supplier", "ETA"]],
         use_container_width=True
     )
