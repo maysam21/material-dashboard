@@ -45,6 +45,10 @@ if file:
     sku_df["Required"] = pd.to_numeric(sku_df[selected_sku], errors="coerce")
     sku_df = sku_df[sku_df["Required"].notna()]
 
+    if sku_df.empty:
+        st.warning("No parts mapped for this SKU.")
+        st.stop()
+
     # Shortage
     sku_df["Shortage"] = sku_df["Required"] - sku_df["TOTAL STOCK"]
     sku_df["Shortage"] = sku_df["Shortage"].apply(lambda x: x if x > 0 else 0)
@@ -66,33 +70,31 @@ if file:
 
     st.markdown("---")
 
-    # ---------------- NEW FG LOGIC (YOUR REQUEST) ----------------
-    # ---------------- TRUE FG LOGIC ----------------
+    # ---------------- TRUE FG LOGIC (CORRECT BOTTLENECK LOGIC) ----------------
 
-# If any required part has zero stock → production = 0
-if (sku_df["TOTAL STOCK"] == 0).any():
-    fg_buildable = 0
-    production_status = "🔴 BLOCKED – At least one required part has zero stock."
-else:
-    sku_df["Possible_FG_From_Part"] = np.floor(
-        sku_df["TOTAL STOCK"] / sku_df["Required"]
-    )
-    fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
-    production_status = "🟢 Production Feasible"
+    if (sku_df["TOTAL STOCK"] == 0).any():
+        fg_buildable = 0
+        production_status = "🔴 BLOCKED – At least one required part has zero stock."
+    else:
+        sku_df["Possible_FG_From_Part"] = np.floor(
+            sku_df["TOTAL STOCK"] / sku_df["Required"]
+        )
+        fg_buildable = int(sku_df["Possible_FG_From_Part"].min())
+        production_status = "🟢 Production Feasible"
 
-st.markdown("### Production Feasibility")
+    st.markdown("### Production Feasibility")
+    st.metric("FG Buildable", fg_buildable)
+    st.write(production_status)
 
-st.metric("FG Buildable", fg_buildable)
-st.write(production_status)
+    # Identify bottleneck part if production possible
+    if fg_buildable > 0:
+        bottleneck_part = sku_df.loc[
+            sku_df["Possible_FG_From_Part"].idxmin()
+        ]["PART NAME"]
 
-# Identify bottleneck part only if production possible
-if fg_buildable > 0:
-    bottleneck_part = sku_df.loc[
-        sku_df["Possible_FG_From_Part"].idxmin()
-    ]["PART NAME"]
+        st.write(f"**Bottleneck Part:** {bottleneck_part}")
 
-    st.write(f"**Bottleneck Part:** {bottleneck_part}")
-
+    st.markdown("---")
 
     # ---------------- TOP BOTTLENECK PARTS ----------------
     bottleneck = sku_df.sort_values("Shortage", ascending=False).head(10)
@@ -123,4 +125,3 @@ if fg_buildable > 0:
         ]],
         use_container_width=True
     )
-
